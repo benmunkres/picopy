@@ -417,12 +417,12 @@ while True:
         # Eject the source drive first, and only eject destination if there is no source drive
         if get_src_drive() is not None:
             # eject the destination drive second
-            log("ejecting destination")
+            log("ejecting source")
             eject_drive(source=True)
             sleep(1)
         else:
             # eject the source drive
-            log("ejecting source")
+            log("ejecting destination")
             eject_drive(source=False)
             sleep(3)
 
