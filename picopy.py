@@ -414,18 +414,17 @@ while True:
     elif eject_button.is_pressed:
         if status == "ready_to_copy":
             status = "idle"
-        # wait to see if this is a simple press or hold:
-        eject_button.wait_for_release(1)
-        if eject_button.is_held:
-            # eject the destination drive
+        # Eject the source drive first, and only eject destination if there is no source drive
+        if get_src_drive() is not None:
+            # eject the destination drive second
             log("ejecting destination")
-            eject_drive(source=False)
-            sleep(3)
-        else:  # short press, no longer held
-            # eject the source drive
-            log("ejecting source")
             eject_drive(source=True)
             sleep(1)
+        else:
+            # eject the source drive
+            log("ejecting source")
+            eject_drive(source=False)
+            sleep(3)
 
     # handle end-of-copy: check integrity of copy
     if status == "copying" and not rsync_thread.is_alive():
