@@ -195,22 +195,25 @@ def eject_drive(source=True):
             log(f"ERR: failed to eject {drive}")
     sleep(0.1)
 
-def prepare_copy():
+def prepare_copy(source, dest):
+    """
+    Check to see if the system is ready for a copy;
+     - are drives available and mounted?
+     - is there enough free space on the drives?
+    """
     log("checking for source and dest drives")
 
-    source = get_src_drive()
     if source is None:
         blink_error(3, 3)
         log("ERR: no source found")
-        return "idle", None, None
+        return False
 
-    dest = get_dest_drive()
     if dest is None:
         blink_error(4, 3)
         log(
             "ERR: no destination found. Dest should contain file or folder PICOPY_DESTINATION in root"
         )
-        return "idle", None, None
+        return False
 
     log(f"found source drive {source} and destination drive {dest}")
 
@@ -222,18 +225,18 @@ def prepare_copy():
     except OSError:
         log("ERR: I/O error, card likely corrupted. Please copy manually!")
         blink_error(6, 3)
-        return "idle", None, None
+        return False
     dest_free = get_free_space(dest)
     log(f"\tsrc size: {src_size} Gb")
     log(f"\tdest free: {dest_free} Gb")
     if src_size > dest_free:
         log("ERR: not enough space on dest for source")
         blink_error(5, 2)  # raise NotEnoughSpaceError
-        return "idle", source, dest
+        return False
 
     # if we make it to hear, we are ready to copy
     # there is a source and a destination with enough space for it
-    return "ready_to_copy", source, dest
+    return True
 
 
 def start_progress_monitor_thread(source, dest, rsync_thread):
@@ -297,7 +300,7 @@ def start_copy_thread(source, dest):
 
     # return the queue, thread, and process
     # we can read the queue and terminate the process from outside this function
-    return ("copying", rsync_process, rsync_outq, rsync_thread, dest_save_dir)
+    return (rsync_process, rsync_outq, rsync_thread, dest_save_dir)
 
 
 def check_dest_synced(source, dest, dest_save_dir):
@@ -347,136 +350,168 @@ def check_dest_synced(source, dest, dest_save_dir):
     log(n_files_out_of_sync)
     return n_files_out_of_sync == 0
 
+#### Main Loop:
+states = {"IDLE", "READY_COPY", "COPYING", "CHECK_COPY", "COMPLETE_TRANSFER", "INCOMPLETE_TRANSFER"}
 
-def cancel_button_held():
-    log("cancel button held")
-    sleep(1)  # so that we don't repeat quickly
-    if not status in ("copying", "incomplete_copy", "complete_copy"):
-        # whatever status we were in, return to idle status
-        return "idle"
-    elif status != "copying":  # no action
-        return status
+### Initial State
+state = "IDLE"
 
-    # if we get here, status is "copying". we want to cancel the copy.
-    if rsync_process is None:
-        # if status is copying, but no rsync process, return to idle status
-        return "idle"
+source_drive = None
+dest_drive = None
 
-    # if status is copying and rsync process is running, cancel it
-    rsync_process.terminate()
-    try:
-        rsync_process.wait(timeout=5)
-        log(f"== subprocess rsync_process exited with rx={rsync_process.returncode}")
-    except subprocess.TimeoutExpired:
-        log("subprocess rsync_process did not terminate in time")
+# time of the last mount check
+last_mount_check = time()
 
-    # because the transfer was cancelled, we go to "incomplete_transfer"
-    return "incomplete_transfer"
-
-
-# the main loop only catches user input and sends work to threads
-status = "idle"
-log("status: " + status)
-
-# TODO: leds for mounted source and dest drives (update every few seconds)
-last_mount_check = -1
-prev_status = None
 while True:
-
     sleep(ui_sleep_time)
 
-    # handle user input
-    if cancel_button.is_held:
-        status = cancel_button_held()
-        sleep(3)
-    elif go_button.is_pressed and status == "idle":
-        log("go button pressed")
-        status, source, dest = prepare_copy()
-        sleep(1)
-    elif go_button.is_pressed and status == "complete_transfer":
-        log("user aknowledged finished transfer")
-        status = "idle"
-        sleep(1)
-    elif go_button.is_held and status == "incomplete_transfer":
-        # requires user to HOLD go button to aknowledge an incomplete transfer
-        log("user akcnowledged incomplete transfer")
-        status = "idle"
-        sleep(3)
-    elif go_button.is_pressed and status == "ready_to_copy":
-        # start copy thread
-        status, rsync_process, rsync_outq, rsync_thread, dest_save_dir = (
-            start_copy_thread(source, dest)
-        )
-        progress_monitor_thread, progress_q = start_progress_monitor_thread(
-            source, dest, rsync_thread
-        )
-        sleep(1)
-    elif eject_button.is_pressed:
-        if status == "ready_to_copy":
-            status = "idle"
-        # Eject the source drive first, and only eject destination if there is no source drive
-        if get_src_drive() is not None:
-            # eject the destination drive second
-            log("ejecting source")
-            eject_drive(source=True)
-            sleep(1)
-        else:
-            # eject the source drive
-            log("ejecting destination")
-            eject_drive(source=False)
-            sleep(3)
+    ### Get Inputs
+    # buttons
+    run_button_pressed = go_button.is_pressed
+    stop_button_pressed = cancel_button.is_pressed
+    eject_button_pressed = eject_button.is_pressed
 
-    # handle end-of-copy: check integrity of copy
-    if status == "copying" and not rsync_thread.is_alive():
-        # we are done copying, or it failed
-        log("rsync thread finished")
-        status = "check_transfer"
+    ### LED Update Logic
+    match state:
+        case "IDLE":
+            error_led.off()
+            progress_led.off()
+            status_led.blink(0.1, 2.9, n=None, background=True)
+        case "READY_COPY":
+            progress_led.off()
+            status_led.blink(1, 1, n=None, background=True)
+        case "COPYING":
+            status_led.blink(0.25, 0.25, n=None, background=True)
+        case "CHECK_COPY":
+            status_led.blink(0.25, 0.25, n=None, background=True)
+        case "COMPLETE_TRANSFER":
+            progress_led.on()
+            status_led.on()
+        case "INCOMPLETE_TRANSFER":
+            progress_led.off()
+            error_led.on()
 
-        status_led.blink(0.25, 0.25)
-        sleep(0.25)
-        progress_led.blink(0.25, 0.25)
+    ### State Update & IO Logic
+    nextstate = None
+    match state:
+        case "IDLE":
+            ## Check for drive mounting status
+            if (time() - last_mount_check) >= mount_check_interval:
+                last_mount_check = time()
+                # update drives only if idle
+                if state == "IDLE":
+                    source_drive = get_src_drive()
+                    dest_drive = get_dest_drive()
+                # handle drive mounting LEDs
+                src_mounted_led.off() if source_drive is None else src_mounted_led.on()
+                dest_mounted_led.off() if dest_drive is None else dest_mounted_led.on()
 
-        # report finished or incomplete transfer
-        complete_transfer = check_dest_synced(source, dest, dest_save_dir)
-        if complete_transfer:
-            log("transfer was complete. Press Go to acknowledge.")
-            status = "complete_transfer"
-        else:
-            log("ERR: transfer was not complete. Hold Go to acknowledge.")
-            status = "incomplete_transfer"
-        status_led.off
-        progress_led.off
+            ## Handle Inputs:
+            # Eject Button
+            if eject_button_pressed:
+                # eject source drive first, then dest drive
+                eject_drive(source=(source_drive is not None))
 
-    # check if source and dest drives are mounted
-    if time() - last_mount_check > mount_check_interval:
-        last_mount_check = time()
-        src_mounted_led.off() if get_src_drive() is None else src_mounted_led.on()
-        dest_mounted_led.off() if get_dest_drive() is None else dest_mounted_led.on()
+            # Run Button
+            copy_ready = False
+            if run_button_pressed:
+                # prepare for a copy operation
+                copy_ready = prepare_copy(source=source_drive, dest=dest_drive)
 
-    # check if status changed during this iteration
-    status_changed = status != prev_status
-    if status_changed:
-        log(f"status: {status}")
+            # idle state: next state is IDLE unless run is pressed
+            nextstate = "READY_COPY" if copy_ready else "IDLE"
 
-    # update LEDs and depending on status:
-    if status_changed:
-        update_leds(status)
+        case "READY_COPY":
+            ## Handle Inputs:
+            if stop_button_pressed:
+                # if stop if pressed, go to IDLE state
+                nextstate = "IDLE"
+            elif run_button_pressed:
+                # if run is pressed, initiate the copy operation
+                rsync_process, rsync_outq, rsync_thread, dest_save_dir = (
+                    start_copy_thread(source, dest)
+                )
+                progress_monitor_thread, progress_q = start_progress_monitor_thread(
+                    source, dest, rsync_thread
+                )
+                sleep(1)
+                nextstate = "START_COPY"
+            else:
+                nextstate = "READY_COPY"
 
-    # read output of copying thread to the log
-    if status == "copying":
-        # read lines from rsync output
-        try:
-            line = rsync_outq.get(block=False)
-            log(line)
-        except queue.Empty:
-            pass  # no lines in queue
+        case "COPYING":
+            ### check if copying is done:
+            nextstate = "COPYING"
+            if not rsync_thread.is_alive():
+                # copying is done:
+                # get process return status
+                log("rsync thread finished")
+                try:
+                    rsync_process.wait(5) # wait for up to five seconds for process to finish
+                except:
+                    log("rsync process didn't terminate properly after 5 seconds")
 
-        # update status LED using messages from progress_q
-        try:
-            progress_float = progress_q.get(block=False)
-            progress_outof10 = floor(progress_float * 10)
-            blink_progress_led(progress_outof10)
-        except queue.Empty:
-            pass
+                return_code = rsync_process.returncode
+                process_succeeded = (return_code is not None) and (return_code == 0)
+                if not process_succeeded:
+                    log(f"rsync process failed, exiting with code {return_code}")
 
-    prev_status = status
+                status_led.blink(0.25, 0.25)
+                sleep(0.25)
+                progress_led.blink(0.25, 0.25)
+
+                nextstate = "CHECK_COPY" if process_succeeded else "INCOMPLETE_TRANSFER"
+
+            ### handle canceling the copy thread:
+            if stop_button_pressed:
+                sleep(2)
+                cancel_held = cancel_button.is_pressed
+                if cancel_held:
+                    ## cancel the copying operation
+                    # if status is copying and rsync process is running, cancel it
+                    rsync_process.terminate()
+                    try:
+                        rsync_process.wait(timeout=5)
+                        log(f"== subprocess rsync_process exited with rx={rsync_process.returncode}")
+                    except subprocess.TimeoutExpired:
+                        log("subprocess rsync_process did not terminate in time")
+
+                nextstate = "INCOMPLETE_TRANSFER"
+
+            ### otherwise, prepare for next copying state
+            if nextstate = "COPYING":
+                # read lines from rsync output
+                try:
+                    line = rsync_outq.get(block=False)
+                    log(line)
+                except queue.Empty:
+                    pass  # no lines in queue
+
+                # update status LED using messages from progress_q
+                try:
+                    progress_float = progress_q.get(block=False)
+                    progress_outof10 = floor(progress_float * 10)
+                    blink_progress_led(progress_outof10)
+                except queue.Empty:
+                    pass
+
+        case "CHECK_COPY":
+            ### check that the copy is complete
+            successful_sync = check_dest_synced(source_drive, dest_drive, dest_save_dir)
+            if successful_sync:
+                log("transfer was complete. Press run to acknowledge.")
+                nextstate = "COMPLETE_TRANSFER"
+            else:
+                log("ERR: transfer was not complete. Press run to acknowledge.")
+                nextstate = "INCOMPLETE_TRANSFER"
+
+        case "COMPLETE_TRANSFER":
+            ### if the transfer has been completed, wait for run to be pressed:
+            nextstate = "IDLE" if run_button_pressed else "COMPLETE_TRANSFER"
+
+        case "INCOMPLETE_TRANSFER":
+            ### if the transfer is incomplete:
+            nextstate = "IDLE" if run_button_pressed else "INCOMPLETE_TRANSFER"
+
+        case _:
+            nextstate = "IDLE"
