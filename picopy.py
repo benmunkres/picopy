@@ -11,10 +11,6 @@ import subprocess
 import threading
 from pathlib import Path
 import queue
-from functools import partial
-
-# import system parameters
-from picopy_params import *
 
 print(f"started picopy at {datetime.datetime.now()}")
 
@@ -32,7 +28,7 @@ COPY_DESTINATION_ID = "PICOPY_DESTINATION"
 ### File Copying Related:
 # file extentions of 'target' files
 # note that this will match extentions that are all lowercase or all capitals (but not weird combinations)
-TARGET_FILE_EXTENTIONS = [".wav"]
+TARGET_FILE_EXTENTIONS = [".tif"]
 
 # add all caps/lower case versions of extentions
 TARGET_FILE_EXTENTIONS = [f"*{ext.lower()}" for ext in
@@ -43,12 +39,15 @@ TARGET_FILE_EXTENTIONS = [f"*{ext.lower()}" for ext in
 EXCLUDE_FILES = ['.Trashes', '.fsevents*', 'System*', '.Spotlight*']
 
 # minimum file size for target files
-MIN_FILE_SIZE = "100k" # 100Kb
+MIN_FILE_SIZE = "0k" # 100Kb
+
+### System:
+UI_SLEEP_TIME = 0.05 # sleep time between main loop iterations, in seconds
 
 ############################ Utility Functions ############################
 def log(msg):
     """Print a Log Message with the current time and state"""
-    print(f"{datetime.datetime.now()} [{state}]:\t{s}")
+    print(f"{datetime.datetime.now()} [{state}]:\t{msg}")
 
 
 def output_parser(process):
@@ -62,6 +61,7 @@ def output_parser(process):
 def output_reader(process, outq):
     """send output from Popen STDOUT to a queue"""
     for line in iter(process.stdout.readline, b""):
+        print(str(line))
         outq.put(line.decode("utf-8"))
 
 
@@ -89,7 +89,7 @@ def get_src_drive():  # TODO: blink the drive LED rather than error
     """search for source and destination drives mounted at mount_location
     a source drive does is any drive listed in /media/pi/ that does not have a file/folder named PICOPY_DESTINATION in root directory
     must find exactly one. if zero returns None, if >1 blinks error"""
-    drives = glob(f"{mount_location}/*")
+    drives = glob(f"{MOUNT_LOCATION}/*")
     src_drives = []
     for d in drives:
         if not os.path.exists(f"{d}/{COPY_DESTINATION_ID}"):
@@ -106,7 +106,7 @@ def get_src_drive():  # TODO: blink the drive LED rather than error
 def get_dest_drive():
     # a destination drive has file/folder {COPY_DESTINATION_ID} in root directory
     # must find exactly one. if zero returns None, if >1 blinks error
-    drives = glob(f"{mount_location}/*")
+    drives = glob(f"{MOUNT_LOCATION}/*")
     dest_drives = []
     for d in drives:
         if os.path.exists(f"{d}/{COPY_DESTINATION_ID}"):
@@ -128,7 +128,7 @@ def eject_drive(drive):
         log("ERR: no drive to eject")
     else:
         # try to eject (unmount) the disk with system umount command
-        cmd = f"umount {drive}"
+        cmd = f"umount '{drive}'"
         log(cmd)
         # Start the process
         process = subprocess.Popen(
@@ -236,18 +236,23 @@ def start_copy_thread(source, dest):
         f"rsync -rvt --log-file=./rsync.log --progress "
         + exclude_flags
         + "".join([f"--exclude '{f}' " for f in TARGET_FILE_EXTENTIONS])
-        + f"{source} {dest_save_dir}"
+        + f"'{source}' '{dest_save_dir}'"
     )
+    print(f"\n\n{cmd}\n\n")
+
     log(cmd)
     subprocess.run(shlex.split(cmd))
 
     # second, copy .wav and .WAV files above min_file_size
     cmd = (
-        f"rsync -rvt --log-file=./rsync.log --min-size={min_file_size} --progress --ignore-existing "
-        + exclude_flags
+        f"rsync -rvt --log-file=./rsync.log --min-size={MIN_FILE_SIZE} --progress "
+        + "--include '*/' "
         + "".join([f"--include '{f}' " for f in TARGET_FILE_EXTENTIONS])
-        + f"{source} {dest_save_dir}"
+        + "--exclude '*' "
+        + f"'{source}' '{dest_save_dir}'"
     )
+    print(f"\n\n{cmd}\n\n")
+
     log(cmd)
     rsync_process = subprocess.Popen(
         shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT
@@ -278,7 +283,7 @@ def check_dest_synced(source, dest, dest_save_dir):
         f"rsync -rvn --stats --progress --size-only "
         + exclude_flags
         + "".join([f"--exclude '{f}' " for f in TARGET_FILE_EXTENTIONS])
-        + f"{source} {dest_save_dir}"
+        + f"'{source}' '{dest_save_dir}'"
     )
     log(cmd)
     check_process = subprocess.Popen(
@@ -295,10 +300,11 @@ def check_dest_synced(source, dest, dest_save_dir):
     # check sync of all wav/WAV files over size limit:
     # rsync command (dry run) to see if any files would be transferred based on size difference
     cmd = (
-        f"rsync -rvn --stats --min-size={min_file_size} --progress --ignore-existing "
-        + exclude_flags
+        f"rsync -rvn --stats --min-size={MIN_FILE_SIZE} --progress --size-only "
+        + "--include '*/' "
         + "".join([f"--include '{f}' " for f in TARGET_FILE_EXTENTIONS])
-        + f"{source} {dest_save_dir}"
+        + "--exclude '*' "
+        + f"'{source}' '{dest_save_dir}'"
     )
     log(cmd)
     check_process = subprocess.Popen(
@@ -349,6 +355,8 @@ states = {"IDLE", "READY_COPY", "COPYING", "CHECK_COPY", "COMPLETE_TRANSFER", "I
 ### Initial State
 state = "IDLE"
 
+state_leds_updated = False
+
 source_drive = None
 dest_drive = None
 
@@ -358,42 +366,62 @@ last_mount_check = time()
 # copy progress
 copy_progress = 0
 
-# button state variables
-run_button_pressed = run_button.is_pressed
-stop_button_pressed = stop_button.is_pressed
-eject_button_pressed = eject_button.is_pressed
+### Setup Button Callbacks
+# button state callback variables
+run_button_pressed = False
+stop_button_pressed = False
+eject_button_pressed = False
+
+# button press callbacks
+def run_pressed_event():
+    global run_button_pressed
+    run_button_pressed = True
+
+def stop_pressed_event():
+    global stop_button_pressed
+    stop_button_pressed = True
+
+def eject_pressed_event():
+    global eject_button_pressed
+    eject_button_pressed = True
+
+run_button.when_pressed = run_pressed_event
+stop_button.when_pressed = stop_pressed_event
+eject_button.when_pressed = eject_pressed_event
+
+# button release callbacks
+# run_button.when_released = lambda _ : run_button_pressed = False
+# stop_button.when_released = lambda _ : stop_button_pressed = False
+# eject_button.when_released = lambda _ : eject_button_pressed = False
 
 while True:
-
-    sleep(ui_sleep_time)
-
-    ### Get Button Inputs
-    # prevent held buttons from triggering multiple state changes
-    run_button_pressed = run_button.is_pressed and (not run_button_pressed)
-    stop_button_pressed = stop_button.is_pressed and (not stop_button_pressed)
-    eject_button_pressed = eject_button.is_pressed and (not stop_button_pressed)
+    sleep(UI_SLEEP_TIME)
 
     ### LED Update Logic
-    match state:
-        case "IDLE":
-            error_led.off()
-            progress_led.off()
-            status_led.blink(0.1, 2.9, n=None, background=True)
-        case "READY_COPY":
-            progress_led.off()
-            status_led.blink(1, 1, n=None, background=True)
-        case "COPYING":
-            status_led.blink(0.25, 0.25, n=None, background=True)
-            progress_led.blink(4*copy_progress, 4*(1 - copy_progress) n=None, background=True)
-        case "CHECK_COPY":
-            progress_led.on()
-            status_led.blink(0.25, 0.25, n=None, background=True)
-        case "COMPLETE_TRANSFER":
-            progress_led.on()
-            status_led.on()
-        case "INCOMPLETE_TRANSFER":
-            progress_led.off()
-            error_led.on()
+    if not state_leds_updated:
+        match state:
+            case "IDLE":
+                error_led.off()
+                progress_led.off()
+                status_led.blink(0.1, 2.9, n=None, background=True)
+            case "READY_COPY":
+                progress_led.off()
+                status_led.blink(1, 1, n=None, background=True)
+            case "COPYING":
+                status_led.blink(0.25, 0.25, n=None, background=True)
+                progress_led.blink(4*copy_progress, 4*(1 - copy_progress), n=None, background=True)
+            case "CHECK_COPY":
+                progress_led.on()
+                status_led.blink(0.25, 0.25, n=None, background=True)
+            case "COMPLETE_TRANSFER":
+                progress_led.on()
+                status_led.on()
+            case "INCOMPLETE_TRANSFER":
+                progress_led.off()
+                status_led.off()
+                error_led.on()
+
+        state_leds_updated = True
 
     ### I/O Status Flags
     # copy ready state
@@ -421,6 +449,7 @@ while True:
                 # eject the source drive if it's mounted, otherwise eject the destination
                 sel_drive = source_drive if (source_drive is not None) else dest_drive
                 eject_drive(drive = sel_drive)
+                eject_button_pressed = False
 
             ## if RUN is pressed, check if we're ready to copy
             if run_button_pressed:
@@ -433,12 +462,11 @@ while True:
             if run_button_pressed and (not stop_button_pressed):
                 # if run is pressed, initiate the copy operation
                 rsync_process, rsync_outq, rsync_thread, dest_save_dir = (
-                    start_copy_thread(source, dest)
+                    start_copy_thread(source_drive, dest_drive)
                 )
                 progress_monitor_thread, progress_q = start_progress_monitor_thread(
-                    source, dest, rsync_thread
+                    source_drive, dest_drive, rsync_thread
                 )
-                sleep(1)
 
         case "COPYING":
             ## Check to see if the copying operation is done:
@@ -459,36 +487,30 @@ while True:
                 status_led.blink(0.25, 0.25)
                 sleep(0.25)
                 progress_led.blink(0.25, 0.25)
-                break
 
             ## Copy operation is canceled
-            if stop_button_pressed:
-                # check for hold (manually...)
-                sleep(1)
-                stop_held = stop_button.is_pressed
-                if stop_held:
-                    copy_done = True
-                    copy_succeeded = False
-                    ## cancel the copying operation
-                    # if status is copying and rsync process is running, cancel it
-                    log("canceling copy")
-                    rsync_process.terminate()
-                    try:
-                        rsync_process.wait(timeout=5)
-                        log(f"== subprocess rsync_process exited with rx={rsync_process.returncode}")
-                    except subprocess.TimeoutExpired:
-                        log("subprocess rsync_process did not terminate in time")
+            elif stop_button_pressed:
+                copy_done = True
+                copy_succeeded = False
+                ## cancel the copying operation
+                # if status is copying and rsync process is running, can cel it
+                log("canceling copy")
+                rsync_process.terminate()
+                try:
+                    rsync_process.wait(timeout=5)
+                    log(f"== subprocess rsync_process exited with rx={rsync_process.returncode}")
+                except subprocess.TimeoutExpired:
+                    log("subprocess rsync_process did not terminate in time")
 
-                    break
 
             ## otherwise prepare for next copy state
             # read lines from rsync output
             line = None
             xfer_line = None
-            while not queue.Empty:
+            while True: # this is janky as shit
                 try:
                     line = rsync_outq.get(block=False)
-                    log(line)
+                    print(f"{line=}")
                     if "to-chk=" in line: # check if line has the number of files left to check
                         xfer_line = line
                 except queue.Empty:
@@ -498,8 +520,9 @@ while True:
             # new blinking paradigm is a four second blink with blink length being determined by
             # the fraction of the number of files transfered
             if xfer_line is not None:
-                left_files, total_files = xfer_line.split("to-chk=")[-1][:-1].split("/")
+                left_files, total_files = xfer_line.split("to-chk=")[-1][:-2].split("/")
                 left_files, total_files = int(left_files), int(total_files)
+                print(f"copy progress = {copy_progress}")
                 copy_progress = 1 - left_files/total_files
 
         case "CHECK_COPY":
@@ -551,8 +574,17 @@ while True:
 
 
     # update the state:
+    if nextstate != state:
+        log(f"state = {state}, nextstate = {nextstate}")
+        state_leds_updated = False
+
     if nextstate in states:
         state = nextstate
     else:
         log(f"ERR: Invalid state {nextstate} reached, reverting to IDLE")
         state = "IDLE"
+
+    ### reset button states
+    run_button_pressed = False
+    stop_button_pressed = False
+    eject_button_pressed = False
