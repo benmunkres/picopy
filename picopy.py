@@ -3,7 +3,7 @@ import datetime
 
 import configparser
 
-# from gpiozero import LED, Button
+from gpiozero import LED, Button
 from time import sleep, time
 import os
 from glob import glob
@@ -64,25 +64,11 @@ for p in PICOPY_CONF_PATHS:
 ## if all paths led to invalid config files
 if not conf_loaded:
     print(f"reverting to hardcoded parameter defaults")
-    ### Storage:
-    # interval between checks for newly plugged-in drives (in seconds)
     MOUNT_CHECK_INTERVAL = 1
-
-    # location of mounted drives (should be left as default for a typical rPi)
     MOUNT_LOCATION = "/media/pi"
-
-    # file/folder to look for to identify the destination
     COPY_DESTINATION_ID = "PICOPY_DESTINATION"
-
-    ### File Copying Related:
-    # file extentions of 'target' files
-    # note that this will match extentions that are all lowercase or all capitals (but not weird combinations)
     TARGET_FILE_EXTENTIONS = [".wav"]
-
-    # files and/or folders to ignore while copying
     EXCLUDE_FILES = ['.Trashes', '.fsevents*', 'System*', '.Spotlight*']
-
-    # minimum file size for target files
     MIN_FILE_SIZE = "100k" # 100Kb
 
 # add all caps/lower case versions of extentions
