@@ -259,6 +259,7 @@ def start_copy_thread(source, dest):
     Path(dest_save_dir).mkdir(exist_ok=True, parents=True)
 
     # second, copy non-empty target files
+    exclude_flags = "".join([f"--exclude '{f}' " for f in EXCLUDE_FILES])
     cmd = (
         f"rsync -rvt --log-file=./rsync.log --min-size=1 --progress "
         + exclude_flags
@@ -288,12 +289,9 @@ def start_copy_thread(source, dest):
 
 def check_dest_synced(source, dest, dest_save_dir):
     log("checking if dest has all files from source")
-    start_time = time()
-
-    n_files_out_of_sync = 0
-
     # check sync of all target files:
     # rsync command (dry run) to see if any files would be transferred based on size difference
+    exclude_flags = "".join([f"--exclude '{f}' " for f in EXCLUDE_FILES])
     cmd = (
         f"rsync -rvn --stats --min-size=1 --progress --size-only "
         + exclude_flags
@@ -314,7 +312,7 @@ def check_dest_synced(source, dest, dest_save_dir):
     ]
     log(return_values)
 
-    n_files_out_of_sync += int(return_values[0].split(" ")[-1])
+    n_files_out_of_sync = int(return_values[0].split(" ")[-1])
     log(f"Number of Out Of Sync Files: {n_files_out_of_sync}")
     return n_files_out_of_sync == 0
 
