@@ -51,8 +51,10 @@ for p in PICOPY_CONF_PATHS:
         # files and/or folders to ignore while copying
         EXCLUDE_FILES = parser['FILE_COPYING']['EXCLUDE_FILES'].split(",")
 
-        # minimum file size for target files
-        MIN_FILE_SIZE = parser['FILE_COPYING']['MIN_FILE_SIZE']
+        ### System Params:
+        DEBOUNCE_TIME = float(parser['SYSTEM']['DEBOUNCE_TIME'])
+        UI_SLEEP_TIME = float(parser['SYSTEM']['UI_SLEEP_TIME'])
+
     except:
         print(f"Error Reading Config File {p}, reverting to defaults")
         continue
@@ -65,17 +67,16 @@ if not conf_loaded:
     MOUNT_CHECK_INTERVAL = 1
     MOUNT_LOCATION = "/media/pi"
     COPY_DESTINATION_ID = "PICOPY_DESTINATION"
-    TARGET_FILE_EXTENTIONS = [".wav"]
+    TARGET_FILE_EXTENTIONS = [".wav", ".txt", ".csv"]
     EXCLUDE_FILES = ['.Trashes', '.fsevents*', 'System*', '.Spotlight*']
-    MIN_FILE_SIZE = "100k" # 100Kb
+    ### System:
+    DEBOUNCE_TIME = 0.1
+    UI_SLEEP_TIME = 0.1 # sleep time between main loop iterations, in seconds
 
 # add all caps/lower case versions of extentions
 TARGET_FILE_EXTENTIONS = [f"*{ext.lower()}" for ext in
                           TARGET_FILE_EXTENTIONS] + [f"*{ext.upper()}" for ext in
                                                      TARGET_FILE_EXTENTIONS]
-
-### System:
-UI_SLEEP_TIME = 0.1 # sleep time between main loop iterations, in seconds
 
 ############################ Utility Functions ############################
 def log(msg):
@@ -257,22 +258,9 @@ def start_copy_thread(source, dest):
     # first create the directory
     Path(dest_save_dir).mkdir(exist_ok=True, parents=True)
 
-    # we will run two rsync commands, copying all non-wav files then including wav files over min_file_size
-    # first copy everything except .wav, .WAV, and architve files we don't want
-    exclude_flags = "".join([f"--exclude '{f}' " for f in EXCLUDE_FILES])
+    # second, copy non-empty target files
     cmd = (
-        f"rsync -rvt --log-file=./rsync.log --progress --max-size={MIN_FILE_SIZE} "
-        + exclude_flags
-        + "".join([f"--exclude '{f}' " for f in TARGET_FILE_EXTENTIONS])
-        + f"'{source}' '{dest_save_dir}'"
-    )
-
-    log(cmd)
-    subprocess.run(shlex.split(cmd))
-
-    # second, copy .wav and .WAV files above min_file_size
-    cmd = (
-        f"rsync -rvt --log-file=./rsync.log --min-size={MIN_FILE_SIZE} --progress "
+        f"rsync -rvt --log-file=./rsync.log --min-size=1 --progress "
         + exclude_flags
         + "--include '*/' "
         + "".join([f"--include '{f}' " for f in TARGET_FILE_EXTENTIONS])
@@ -304,30 +292,10 @@ def check_dest_synced(source, dest, dest_save_dir):
 
     n_files_out_of_sync = 0
 
-    # check sync of non wav/WAV files: (dry run with -n flag and --stats)
-    exclude_flags = "".join([f"--exclude '{f}' " for f in EXCLUDE_FILES])
-    cmd = (
-        f"rsync -rvn --stats --progress --size-only --max-size={MIN_FILE_SIZE} "
-        + exclude_flags
-        + "".join([f"--exclude '{f}' " for f in TARGET_FILE_EXTENTIONS])
-        + f"'{source}' '{dest_save_dir}'"
-    )
-    log(cmd)
-    check_process = subprocess.Popen(
-        shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-    )
-    return_values = [
-        f
-        for f in output_parser(check_process)
-        if "Number of regular files transferred" in f
-    ]
-    log(return_values)
-    n_files_out_of_sync += int(return_values[0].split(" ")[-1])
-
-    # check sync of all wav/WAV files over size limit:
+    # check sync of all target files:
     # rsync command (dry run) to see if any files would be transferred based on size difference
     cmd = (
-        f"rsync -rvn --stats --min-size={MIN_FILE_SIZE} --progress --size-only "
+        f"rsync -rvn --stats --min-size=1 --progress --size-only "
         + exclude_flags
         + "--include '*/' "
         + "".join([f"--include '{f}' " for f in TARGET_FILE_EXTENTIONS])
@@ -347,7 +315,7 @@ def check_dest_synced(source, dest, dest_save_dir):
     log(return_values)
 
     n_files_out_of_sync += int(return_values[0].split(" ")[-1])
-    log(n_files_out_of_sync)
+    log(f"Number of Out Of Sync Files: {n_files_out_of_sync}")
     return n_files_out_of_sync == 0
 
 
@@ -366,9 +334,9 @@ except Exception as e:
     process in htop.
     """) from e
 
-run_button = Button(4, hold_time=1)
-stop_button = Button(17, hold_time=1)
-eject_button = Button(5, hold_time=1)
+run_button = Button(4, bounce_time=DEBOUNCE_TIME)
+stop_button = Button(17, bounce_time=DEBOUNCE_TIME)
+eject_button = Button(5, bounce_time=DEBOUNCE_TIME)
 # power button is GPIO3, but managed by a separate script
 
 # initialize global variables
