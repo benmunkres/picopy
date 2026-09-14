@@ -1,5 +1,6 @@
 # picopy
 Copy sd cards to to a hard drive on Raspberry Pi-based Swallow devices
+Refactored and with added configuration options :)
 
 Navigation:
 
