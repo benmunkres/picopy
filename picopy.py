@@ -263,7 +263,7 @@ def start_copy_thread(source, dest):
     # first copy everything except .wav, .WAV, and architve files we don't want
     exclude_flags = "".join([f"--exclude '{f}' " for f in EXCLUDE_FILES])
     cmd = (
-        f"rsync -rvt --log-file=./rsync.log --progress "
+        f"rsync -rvt --log-file=./rsync.log --progress --max-size={MIN_FILE_SIZE} "
         + exclude_flags
         + "".join([f"--exclude '{f}' " for f in TARGET_FILE_EXTENTIONS])
         + f"'{source}' '{dest_save_dir}'"
@@ -308,7 +308,7 @@ def check_dest_synced(source, dest, dest_save_dir):
     # check sync of non wav/WAV files: (dry run with -n flag and --stats)
     exclude_flags = "".join([f"--exclude '{f}' " for f in EXCLUDE_FILES])
     cmd = (
-        f"rsync -rvn --stats --progress --size-only "
+        f"rsync -rvn --stats --progress --size-only --max-size={MIN_FILE_SIZE} "
         + exclude_flags
         + "".join([f"--exclude '{f}' " for f in TARGET_FILE_EXTENTIONS])
         + f"'{source}' '{dest_save_dir}'"
