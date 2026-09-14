@@ -8,6 +8,8 @@ echo "=> Installing picopy...\n"
 sudo cp picopy.py /usr/local/bin/
 sudo chmod +x /usr/local/bin/picopy.py
 
+sudo cp picopy.conf /etc/
+
 sudo cp picopy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable picopy.service

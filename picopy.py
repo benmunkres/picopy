@@ -1,7 +1,9 @@
 from math import floor
 import datetime
 
-from gpiozero import LED, Button
+import configparser
+
+# from gpiozero import LED, Button
 from time import sleep, time
 import os
 from glob import glob
@@ -15,31 +17,78 @@ import queue
 print(f"started picopy at {datetime.datetime.now()}")
 
 ############################ PiCopy Parameters ############################
-### Storage:
-# interval between checks for newly plugged-in drives (in seconds)
-MOUNT_CHECK_INTERVAL = 1
+### import config file:
+# default paths: /home/pi/picopy/picopy.conf, /etc/picopy.conf
+PICOPY_CONF_PATHS = ["~/picopy/picopy.conf", "/etc/picopy.conf"]
 
-# location of mounted drives (should be left as default for a typical rPi)
-MOUNT_LOCATION = "/media/pi"
+# attempt to load config
+conf_loaded = False
+for p in PICOPY_CONF_PATHS:
+    p = Path(p).expanduser()
+    if not p.exists():
+        continue
 
-# file/folder to look for to identify the destination
-COPY_DESTINATION_ID = "PICOPY_DESTINATION"
+    # load the config file
+    parser = configparser.ConfigParser()
+    parser.read(p)
 
-### File Copying Related:
-# file extentions of 'target' files
-# note that this will match extentions that are all lowercase or all capitals (but not weird combinations)
-TARGET_FILE_EXTENTIONS = [".wav"]
+    print(parser.sections())
+
+    try:
+        ### Storage:
+        # interval between checks for newly plugged-in drives (in seconds)
+        MOUNT_CHECK_INTERVAL = int(parser['STORAGE']['MOUNT_CHECK_INTERVAL'])
+
+        # location of mounted drives (should be left as default for a typical rPi)
+        MOUNT_LOCATION = parser['STORAGE']['MOUNT_LOCATION']
+
+        # file/folder to look for to identify the destination
+        COPY_DESTINATION_ID = parser['STORAGE']['COPY_DESTINATION_ID']
+
+        ### File Copying Related:
+        # file extentions of 'target' files
+        # note that this will match extentions that are all lowercase or all capitals (but not weird combinations)
+        TARGET_FILE_EXTENTIONS = parser['FILE_COPYING']['TARGET_FILE_EXTENTIONS'].split(",")
+
+        # files and/or folders to ignore while copying
+        EXCLUDE_FILES = parser['FILE_COPYING']['EXCLUDE_FILES'].split(",")
+
+        # minimum file size for target files
+        MIN_FILE_SIZE = parser['FILE_COPYING']['MIN_FILE_SIZE']
+    except:
+        print(f"Error Reading Config File {p}, reverting to defaults")
+        continue
+
+    conf_loaded = True
+
+## if all paths led to invalid config files
+if not conf_loaded:
+    print(f"reverting to hardcoded parameter defaults")
+    ### Storage:
+    # interval between checks for newly plugged-in drives (in seconds)
+    MOUNT_CHECK_INTERVAL = 1
+
+    # location of mounted drives (should be left as default for a typical rPi)
+    MOUNT_LOCATION = "/media/pi"
+
+    # file/folder to look for to identify the destination
+    COPY_DESTINATION_ID = "PICOPY_DESTINATION"
+
+    ### File Copying Related:
+    # file extentions of 'target' files
+    # note that this will match extentions that are all lowercase or all capitals (but not weird combinations)
+    TARGET_FILE_EXTENTIONS = [".wav"]
+
+    # files and/or folders to ignore while copying
+    EXCLUDE_FILES = ['.Trashes', '.fsevents*', 'System*', '.Spotlight*']
+
+    # minimum file size for target files
+    MIN_FILE_SIZE = "100k" # 100Kb
 
 # add all caps/lower case versions of extentions
 TARGET_FILE_EXTENTIONS = [f"*{ext.lower()}" for ext in
                           TARGET_FILE_EXTENTIONS] + [f"*{ext.upper()}" for ext in
                                                      TARGET_FILE_EXTENTIONS]
-
-# files and/or folders to ignore while copying
-EXCLUDE_FILES = ['.Trashes', '.fsevents*', 'System*', '.Spotlight*']
-
-# minimum file size for target files
-MIN_FILE_SIZE = "100k" # 100Kb
 
 ### System:
 UI_SLEEP_TIME = 0.1 # sleep time between main loop iterations, in seconds

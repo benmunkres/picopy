@@ -15,6 +15,7 @@ sudo systemctl disable listen-for-shutdown.service
 echo "=> Removing picopy...\n"
 sudo rm -f /usr/local/bin/picopy.py
 sudo rm -f /etc/systemd/system/picopy.service
+sudo rm -f /etc/picopy.conf
 
 echo "=> Removing listen-for-shutdown...\n"
 sudo rm -f /usr/local/bin/listen-for-shutdown.py
