@@ -61,7 +61,6 @@ def output_parser(process):
 def output_reader(process, outq):
     """send output from Popen STDOUT to a queue"""
     for line in iter(process.stdout.readline, b""):
-        print(str(line))
         outq.put(line.decode("utf-8"))
 
 
@@ -77,13 +76,8 @@ def get_used_space(disk, scale=2**30):
 
 def blink_error(n, reps=2):
     """blink the error led to send a message"""
-    for r in range(reps):
-        for i in range(n):
-            error_led.on()
-            sleep(0.2)
-            error_led.off()
-            sleep(0.2)
-        sleep(0.4)
+    global error_led
+    error_led.blink(0.2, 0.2, n=reps, background=False)
 
 def get_src_drive():  # TODO: blink the drive LED rather than error
     """search for source and destination drives mounted at mount_location
@@ -196,26 +190,27 @@ def prepare_copy(source, dest):
     # there is a source and a destination with enough space for it
     return True
 
+def progress_monitor(progress_queue, progress_led):
+    """
+    Blink Progress LED based on transfer progress
+    """
+    progress_frac = 0
+    while True:
+        # try to update the progress fraction
+        while not progress_queue.empty():
+            try:
+                progress_frac = progress_queue.get_nowait()
+            except queue.Empty:
+                break
 
-def start_progress_monitor_thread(source, dest, rsync_thread):
-    progress_q = queue.Queue()
+        if progress_frac is None:
+            return
 
-    progress_monitor_thread = threading.Thread(
-        target=monitor_progress, args=(source, dest, progress_q, rsync_thread)
-    )
-    progress_monitor_thread.start()
-    return progress_monitor_thread, progress_q
+        progress_outoften = floor(progress_frac*10)
 
-
-def monitor_progress(source, dest, progress_q, rsync_thread):
-    src_size = get_used_space(source)
-    dest_free = get_free_space(dest)
-    while rsync_thread.is_alive():
-        sleep(6)
-        copied_size = dest_free - get_free_space(dest)
-        progress_float = copied_size / src_size
-        progress_q.put(progress_float)
-
+        # blink LED progress outof10 times
+        progress_led.blink(0.1, 0.15, progress_outoften, background=False)
+        sleep(3 - 0.25 * progress_outoften)
 
 def start_copy_thread(source, dest):
     """
@@ -238,7 +233,6 @@ def start_copy_thread(source, dest):
         + "".join([f"--exclude '{f}' " for f in TARGET_FILE_EXTENTIONS])
         + f"'{source}' '{dest_save_dir}'"
     )
-    print(f"\n\n{cmd}\n\n")
 
     log(cmd)
     subprocess.run(shlex.split(cmd))
@@ -251,7 +245,6 @@ def start_copy_thread(source, dest):
         + "--exclude '*' "
         + f"'{source}' '{dest_save_dir}'"
     )
-    print(f"\n\n{cmd}\n\n")
 
     log(cmd)
     rsync_process = subprocess.Popen(
@@ -364,7 +357,8 @@ dest_drive = None
 last_mount_check = time()
 
 # copy progress
-copy_progress = 0
+copy_progress_queue = None
+copy_progress_thread = None
 
 ### Setup Button Callbacks
 # button state callback variables
@@ -372,7 +366,7 @@ run_button_pressed = False
 stop_button_pressed = False
 eject_button_pressed = False
 
-# button press callbacks
+### button press callbacks
 def run_pressed_event():
     global run_button_pressed
     run_button_pressed = True
@@ -389,11 +383,6 @@ run_button.when_pressed = run_pressed_event
 stop_button.when_pressed = stop_pressed_event
 eject_button.when_pressed = eject_pressed_event
 
-# button release callbacks
-# run_button.when_released = lambda _ : run_button_pressed = False
-# stop_button.when_released = lambda _ : stop_button_pressed = False
-# eject_button.when_released = lambda _ : eject_button_pressed = False
-
 while True:
     sleep(UI_SLEEP_TIME)
 
@@ -405,11 +394,9 @@ while True:
                 progress_led.off()
                 status_led.blink(0.1, 2.9, n=None, background=True)
             case "READY_COPY":
-                progress_led.off()
                 status_led.blink(1, 1, n=None, background=True)
             case "COPYING":
                 status_led.blink(0.25, 0.25, n=None, background=True)
-                progress_led.blink(4*copy_progress, 4*(1 - copy_progress), n=None, background=True)
             case "CHECK_COPY":
                 progress_led.on()
                 status_led.blink(0.25, 0.25, n=None, background=True)
@@ -464,9 +451,13 @@ while True:
                 rsync_process, rsync_outq, rsync_thread, dest_save_dir = (
                     start_copy_thread(source_drive, dest_drive)
                 )
-                progress_monitor_thread, progress_q = start_progress_monitor_thread(
-                    source_drive, dest_drive, rsync_thread
+
+                # start thread to blink progress light
+                progress_queue = queue.Queue()
+                progress_monitor_thread = threading.Thread(
+                    target=progress_monitor, args=(progress_queue, progress_led)
                 )
+                progress_monitor_thread.start()
 
         case "COPYING":
             ## Check to see if the copying operation is done:
@@ -484,9 +475,8 @@ while True:
                 if not copy_succeeded:
                     log(f"rsync process failed, exiting with code {return_code}")
 
-                status_led.blink(0.25, 0.25)
-                sleep(0.25)
-                progress_led.blink(0.25, 0.25)
+                progress_queue.put(None)
+                progress_monitor_thread.join()
 
             ## Copy operation is canceled
             elif stop_button_pressed:
@@ -502,6 +492,9 @@ while True:
                 except subprocess.TimeoutExpired:
                     log("subprocess rsync_process did not terminate in time")
 
+                progress_queue.put(None)
+                progress_monitor_thread.join()
+
 
             ## otherwise prepare for next copy state
             # read lines from rsync output
@@ -510,7 +503,7 @@ while True:
             while True: # this is janky as shit
                 try:
                     line = rsync_outq.get(block=False)
-                    print(f"{line=}")
+                    print(line)
                     if "to-chk=" in line: # check if line has the number of files left to check
                         xfer_line = line
                 except queue.Empty:
@@ -522,14 +515,14 @@ while True:
             if xfer_line is not None:
                 left_files, total_files = xfer_line.split("to-chk=")[-1][:-2].split("/")
                 left_files, total_files = int(left_files), int(total_files)
-                print(f"copy progress = {copy_progress}")
                 copy_progress = 1 - left_files/total_files
+                progress_queue.put(copy_progress)
 
         case "CHECK_COPY":
             ## check the integrity of the copy
             successful_check = check_dest_synced(source_drive, dest_drive, dest_save_dir)
             if (successful_check):
-                log("complete successful transfer, pres RUN to acknowledge")
+                log("complete successful transfer, press RUN to acknowledge")
             else:
                 log("ERR: incomplete transfer, press RUN to acknowledge")
 
