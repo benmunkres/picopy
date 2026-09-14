@@ -28,7 +28,7 @@ COPY_DESTINATION_ID = "PICOPY_DESTINATION"
 ### File Copying Related:
 # file extentions of 'target' files
 # note that this will match extentions that are all lowercase or all capitals (but not weird combinations)
-TARGET_FILE_EXTENTIONS = [".tif"]
+TARGET_FILE_EXTENTIONS = [".wav"]
 
 # add all caps/lower case versions of extentions
 TARGET_FILE_EXTENTIONS = [f"*{ext.lower()}" for ext in
@@ -39,10 +39,10 @@ TARGET_FILE_EXTENTIONS = [f"*{ext.lower()}" for ext in
 EXCLUDE_FILES = ['.Trashes', '.fsevents*', 'System*', '.Spotlight*']
 
 # minimum file size for target files
-MIN_FILE_SIZE = "0k" # 100Kb
+MIN_FILE_SIZE = "100k" # 100Kb
 
 ### System:
-UI_SLEEP_TIME = 0.05 # sleep time between main loop iterations, in seconds
+UI_SLEEP_TIME = 0.1 # sleep time between main loop iterations, in seconds
 
 ############################ Utility Functions ############################
 def log(msg):
