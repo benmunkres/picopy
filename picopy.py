@@ -32,8 +32,6 @@ for p in PICOPY_CONF_PATHS:
     parser = configparser.ConfigParser()
     parser.read(p)
 
-    print(parser.sections())
-
     try:
         ### Storage:
         # interval between checks for newly plugged-in drives (in seconds)
@@ -241,7 +239,7 @@ def progress_monitor(progress_queue, progress_led):
         if progress_frac is None:
             return
 
-        progress_outoften = floor(progress_frac*10)
+        progress_outoften = round(progress_frac*10)
 
         # blink LED progress outof10 times
         progress_led.blink(0.1, 0.15, progress_outoften, background=False)
@@ -275,6 +273,7 @@ def start_copy_thread(source, dest):
     # second, copy .wav and .WAV files above min_file_size
     cmd = (
         f"rsync -rvt --log-file=./rsync.log --min-size={MIN_FILE_SIZE} --progress "
+        + exclude_flags
         + "--include '*/' "
         + "".join([f"--include '{f}' " for f in TARGET_FILE_EXTENTIONS])
         + "--exclude '*' "
@@ -329,6 +328,7 @@ def check_dest_synced(source, dest, dest_save_dir):
     # rsync command (dry run) to see if any files would be transferred based on size difference
     cmd = (
         f"rsync -rvn --stats --min-size={MIN_FILE_SIZE} --progress --size-only "
+        + exclude_flags
         + "--include '*/' "
         + "".join([f"--include '{f}' " for f in TARGET_FILE_EXTENTIONS])
         + "--exclude '*' "
@@ -535,7 +535,7 @@ while True:
             # read lines from rsync output
             line = None
             xfer_line = None
-            while True: # this is janky as shit
+            while True:
                 try:
                     line = rsync_outq.get(block=False)
                     print(line)
@@ -551,6 +551,7 @@ while True:
                 left_files, total_files = xfer_line.split("to-chk=")[-1][:-2].split("/")
                 left_files, total_files = int(left_files), int(total_files)
                 copy_progress = 1 - left_files/total_files
+                log(f"Copy Progress = {copy_progress}")
                 progress_queue.put(copy_progress)
 
         case "CHECK_COPY":
