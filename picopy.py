@@ -1,20 +1,27 @@
-from math import floor
+"""
+picopy.py
+
+Main PiCopy script, runs copying 'UI', and actually handles copying, transfer checking,
+disk ejecting, and more
+
+Authors: Sam Lapp, Ben Munkres
+"""
+
 import datetime
+print(f"started picopy at {datetime.datetime.now()}") # this needs to be first so the buttons work???
 
 import configparser
-
 from gpiozero import LED, Button
 from time import sleep, time
 import os
 from glob import glob
+from math import floor
 from shutil import disk_usage
 import shlex
 import subprocess
 import threading
 from pathlib import Path
 import queue
-
-print(f"started picopy at {datetime.datetime.now()}")
 
 ############################ PiCopy Parameters ############################
 ### import config file:

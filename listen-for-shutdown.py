@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""this script listenes for a shutdown command (3 second hold of power button)
+"""
+listen-for-shutdown.py
+
+this script listenes for a shutdown command (3 second hold of power button)
 
 it shuts down the pi if and only if there are no external drives mounted at /media/pi
 when the shutdown button command is recieved.
@@ -7,15 +10,16 @@ when the shutdown button command is recieved.
 Note: this script used to control LEDs, but that caused conflicts with other scripts controlling
 LEDs so that functionality was removed.
 """
+from datetime import datetime
+print(f"started listen-for-shutdown at {datetime.datetime.now()}")
 
 import subprocess
-from datetime import datetime
 from gpiozero import Button
 from time import sleep
 import os
 from pathlib import Path
 
-sleep_time = 0.1  # run loop 10x/sec
+sleep_time = 0.5  # run loop 10x/sec
 button_hold_time = 3  # require 3 second hold to shut down pi
 power_button = Button(3, hold_time=3)
 
