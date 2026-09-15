@@ -374,7 +374,7 @@ copy_progress_thread = None
 run_button_pressed = False
 stop_button_pressed = False
 eject_button_pressed = False
-power_button_held = True
+power_button_held = False
 
 ### button press callbacks
 def run_pressed_event():
@@ -460,7 +460,7 @@ while True:
             ## if power button is held, power off IFF no drives are in
             if power_button_held:
                 if (source_drive is None) and (dest_drive is None):
-                    log("Shutting Down")
+                    log("shutting down")
                     # force shutdown
                     subprocess.call(["sudo", "shutdown", "-h", "now"], shell=False)
                 else:
