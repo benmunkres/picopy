@@ -342,6 +342,7 @@ except Exception as e:
 run_button = Button(4, bounce_time=DEBOUNCE_TIME)
 stop_button = Button(17, bounce_time=DEBOUNCE_TIME)
 eject_button = Button(5, bounce_time=DEBOUNCE_TIME)
+power_button = Button(3, bounce_time=DEBOUNCE_TIME, hold_time=3) # not sure hold time will work...
 # power button is GPIO3, but managed by a separate script
 
 # initialize global variables
@@ -373,6 +374,7 @@ copy_progress_thread = None
 run_button_pressed = False
 stop_button_pressed = False
 eject_button_pressed = False
+power_button_held = True
 
 ### button press callbacks
 def run_pressed_event():
@@ -387,9 +389,14 @@ def eject_pressed_event():
     global eject_button_pressed
     eject_button_pressed = True
 
+def power_held_event():
+    global power_button_held
+    power_button_held = True
+
 run_button.when_pressed = run_pressed_event
 stop_button.when_pressed = stop_pressed_event
 eject_button.when_pressed = eject_pressed_event
+power_button.when_held = power_held_event
 
 while True:
     sleep(UI_SLEEP_TIME)
@@ -449,6 +456,16 @@ while True:
             ## if RUN is pressed, check if we're ready to copy
             if run_button_pressed:
                 copy_ready = prepare_copy(source=source_drive, dest=dest_drive)
+
+            ## if power button is held, power off IFF no drives are in
+            if power_button_held:
+                if (source_drive is None) and (dest_drive is None):
+                    log("Shutting Down")
+                    # force shutdown
+                    subprocess.call(["sudo", "shutdown", "-h", "now"], shell=False)
+                else:
+                    log("drives are present, not shutting down")
+                    blink_error(2, 4)
 
             copy_progress = 0
 
@@ -590,3 +607,4 @@ while True:
     run_button_pressed = False
     stop_button_pressed = False
     eject_button_pressed = False
+    power_button_held = False
