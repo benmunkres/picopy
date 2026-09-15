@@ -446,6 +446,8 @@ while True:
                 src_mounted_led.off() if source_drive is None else src_mounted_led.on()
                 dest_mounted_led.off() if dest_drive is None else dest_mounted_led.on()
 
+                last_mount_check = time()
+
             ## if eject is pressed, eject the disks
             if eject_button_pressed:
                 # eject the source drive if it's mounted, otherwise eject the destination
